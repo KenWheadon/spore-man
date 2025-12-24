@@ -1,7 +1,9 @@
-import { createContext, useContext, useReducer, ReactNode, useMemo, useEffect, useRef } from 'react';
-import type { GameState, GameAction, Plot, ActiveMission, MissionResult } from '../lib/types';
+import { createContext, useContext, useReducer, useMemo, useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
+import type { GameState, GameAction, Plot, ActiveMission } from '../lib/types';
 import { UPGRADES } from '../config/upgrades';
 import { MISSIONS } from '../config/missions';
+import { ACHIEVEMENTS } from '../config/achievements';
 
 const INITIAL_PLOTS: Plot[] = Array(9).fill(null).map((_, i) => ({
     id: i,
@@ -24,7 +26,11 @@ const INITIAL_STATE: GameState = {
     activeMissions: [],
     clickLevel: 1,
     clickXP: 0,
-    goldenShroom: null
+    goldenShroom: null,
+    achievements: [],
+    stats: {
+        totalClicks: 0
+    }
 };
 
 // Save Key
@@ -55,7 +61,10 @@ const getInitialState = (): GameState => {
             // Basic validation: ensure arrays exist (migration for old saves if we had them)
             if (!parsed.plots) parsed.plots = INITIAL_PLOTS;
             if (!parsed.activeMissions) parsed.activeMissions = [];
+            if (!parsed.activeMissions) parsed.activeMissions = [];
             if (!parsed.clickLevel) parsed.clickLevel = 1;
+            if (!parsed.achievements) parsed.achievements = [];
+            if (!parsed.stats) parsed.stats = { totalClicks: 0 };
 
             // Offline Progress Calculation
             const now = Date.now();
@@ -85,7 +94,36 @@ const GameContext = createContext<{
     stats: { clickPower: number; autoSpores: number };
 } | undefined>(undefined);
 
+function checkAchievements(state: GameState): string[] {
+    const newUnlocked: string[] = [];
+
+    ACHIEVEMENTS.forEach(ach => {
+        if (state.achievements.includes(ach.id)) return;
+
+        let unlocked = false;
+        switch (ach.type) {
+            case 'click_count':
+                if (state.stats.totalClicks >= ach.threshold) unlocked = true;
+                break;
+            case 'resource_count':
+                if (ach.resource && state.resources[ach.resource as keyof typeof state.resources] >= ach.threshold) unlocked = true;
+                break;
+            case 'mode_unlock':
+                if (ach.mode && state.unlockedModes.includes(ach.mode as any)) unlocked = true;
+                break;
+        }
+
+        if (unlocked) {
+            newUnlocked.push(ach.id);
+        }
+    });
+
+    return newUnlocked;
+}
+
 function gameReducer(state: GameState, action: GameAction): GameState {
+    let newState = state;
+
     switch (action.type) {
         case 'ADD_RESOURCE':
             // Keep generic add for other sources, but CLICK_MUSHROOM now handles clicks specifically
@@ -97,7 +135,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
             if (unlockGarden) nextUnlockedModes = [...nextUnlockedModes, 'garden'];
             if (unlockMissions && !nextUnlockedModes.includes('missions')) nextUnlockedModes = [...nextUnlockedModes, 'missions'];
 
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -105,6 +143,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 },
                 unlockedModes: nextUnlockedModes
             };
+            break;
 
         case 'CLICK_MUSHROOM':
             const stats = calculateStats(state.upgrades);
@@ -137,7 +176,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
             let modes = state.unlockedModes;
             if (willUnlockGarden) modes = [...modes, 'garden'];
 
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -146,11 +185,16 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 clickLevel: newLevel,
                 clickXP: newXP,
                 goldenShroom: newGoldenShroom,
-                unlockedModes: modes
+                unlockedModes: modes,
+                stats: {
+                    ...state.stats,
+                    totalClicks: state.stats.totalClicks + 1
+                }
             };
+            break;
 
         case 'SPAWN_GOLDEN':
-            return {
+            newState = {
                 ...state,
                 goldenShroom: {
                     active: true,
@@ -159,13 +203,14 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                     expiresAt: Date.now() + 3000
                 }
             };
+            break;
 
         case 'CLICK_GOLDEN':
             if (!state.goldenShroom || !state.goldenShroom.active) return state;
 
             const bonus = state.clickLevel * 100;
 
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -173,23 +218,27 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 },
                 goldenShroom: null
             };
+            break;
 
         case 'DESPAWN_GOLDEN':
-            return {
+            newState = {
                 ...state,
                 goldenShroom: null
             };
+            break;
 
         case 'SPEND_RESOURCE':
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
                     [action.payload.resource]: Math.max(0, state.resources[action.payload.resource] - action.payload.amount),
                 },
             };
+            break;
+
         case 'BUY_UPGRADE':
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -200,21 +249,34 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                     [action.payload.upgradeId]: (state.upgrades[action.payload.upgradeId] || 0) + 1
                 }
             };
+            break;
+
         case 'UNLOCK_MODE':
             if (state.unlockedModes.includes(action.payload)) return state;
-            return {
+            newState = {
                 ...state,
                 unlockedModes: [...state.unlockedModes, action.payload],
             };
+            break;
+
         case 'SWITCH_MODE':
-            return {
+            newState = {
                 ...state,
                 currentMode: action.payload,
             };
+            break;
+
         case 'LOAD_GAME':
-            return { ...action.payload };
+            // Need to migrate stats if missing in loaded save, though getInitialState usually handles this
+            newState = {
+                ...action.payload,
+                stats: action.payload.stats || { totalClicks: 0 },
+                achievements: action.payload.achievements || []
+            };
+            break;
+
         case 'UNLOCK_PLOT':
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -222,8 +284,10 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 },
                 plots: state.plots.map(p => p.id === action.payload.plotId ? { ...p, unlocked: true } : p)
             };
+            break;
+
         case 'PLANT_SEED':
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -231,11 +295,13 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 },
                 plots: state.plots.map(p => p.id === action.payload.plotId ? { ...p, seedId: action.payload.seedId, plantTime: Date.now() } : p)
             };
+            break;
+
         case 'HARVEST_PLOT':
             const gainedWarriors = state.resources.warriors + action.payload.warriorYield;
             const unlockMissionsHarvest = gainedWarriors >= 1 && !state.unlockedModes.includes('missions');
 
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -244,6 +310,8 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 plots: state.plots.map(p => p.id === action.payload.plotId ? { ...p, seedId: null, plantTime: null } : p),
                 unlockedModes: unlockMissionsHarvest ? [...state.unlockedModes, 'missions'] : state.unlockedModes
             };
+            break;
+
         case 'START_MISSION':
             const newMission: ActiveMission = {
                 id: Math.random().toString(36).substr(2, 9),
@@ -252,7 +320,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 endTime: Date.now() + action.payload.duration * 1000,
                 status: 'active'
             };
-            return {
+            newState = {
                 ...state,
                 resources: {
                     ...state.resources,
@@ -260,8 +328,10 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 },
                 activeMissions: [...state.activeMissions, newMission]
             };
+            break;
+
         case 'COMPLETE_MISSION':
-            return {
+            newState = {
                 ...state,
                 activeMissions: state.activeMissions.map(m =>
                     m.id === action.payload.missionInstanceId
@@ -269,6 +339,8 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                         : m
                 )
             };
+            break;
+
         case 'CLAIM_MISSION':
             const missionToClaim = state.activeMissions.find(m => m.id === action.payload.missionInstanceId);
             if (!missionToClaim || !missionToClaim.result) return state;
@@ -285,11 +357,12 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 });
             }
 
-            return {
+            newState = {
                 ...state,
                 resources: newResources,
                 activeMissions: state.activeMissions.filter(m => m.id !== action.payload.missionInstanceId)
             };
+            break;
 
         case 'TICK':
             const { autoSpores: aSpores } = calculateStats(state.upgrades);
@@ -318,11 +391,23 @@ function gameReducer(state: GameState, action: GameAction): GameState {
                 newStateRef.unlockedModes = [...newStateRef.unlockedModes, 'garden'];
             }
 
-            return newStateRef;
+            newState = newStateRef;
+            break;
 
         default:
             return state;
     }
+
+    // Check Achievements
+    const unlockedAchievements = checkAchievements(newState);
+    if (unlockedAchievements.length > 0) {
+        return {
+            ...newState,
+            achievements: [...newState.achievements, ...unlockedAchievements]
+        };
+    }
+
+    return newState;
 }
 
 export function GameProvider({ children }: { children: ReactNode }) {

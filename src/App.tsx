@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useGame } from './context/GameContext';
 import { useGameLoop } from './hooks/useGameLoop';
 import { useMissionResolver } from './hooks/useMissionResolver';
@@ -8,6 +8,7 @@ import './styles/global.css';
 import ClickerMode from './features/clicker/ClickerMode';
 import GardenMode from './features/garden/GardenMode';
 import MissionMode from './features/missions/MissionMode';
+import { AchievementsModal } from './features/achievements/AchievementsModal';
 // import HiveMode from './features/hive/HiveMode'; // TODO: Phase 4
 
 function App() {
@@ -16,6 +17,7 @@ function App() {
   useMissionResolver();
 
   const { state, dispatch } = useGame();
+  const [showAchievements, setShowAchievements] = useState(false);
 
   return (
     <div className="app-container" style={{
@@ -38,6 +40,21 @@ function App() {
         <div style={{ fontWeight: 'bold', fontSize: '1.2rem', color: 'var(--accent-primary)' }}>
           FUNGAL EVOLUTION
         </div>
+
+        <button
+          className="btn-primary"
+          onClick={() => setShowAchievements(true)}
+          style={{
+            position: 'absolute',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            border: '1px solid var(--accent-primary)',
+            background: 'rgba(16, 185, 129, 0.1)'
+          }}
+        >
+          🏆 Achievements
+        </button>
+
         <div style={{ display: 'flex', gap: '2rem' }}>
           <div>Spores: <span style={{ color: 'var(--accent-primary)' }}>{Math.floor(state.resources.spores)}</span></div>
           <div>Mycelium: <span style={{ color: 'var(--accent-secondary)' }}>{Math.floor(state.resources.mycelium)}</span></div>
@@ -90,6 +107,7 @@ function App() {
           </button>
         )}
       </footer>
+      {showAchievements && <AchievementsModal onClose={() => setShowAchievements(false)} />}
     </div>
   );
 }

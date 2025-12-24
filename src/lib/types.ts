@@ -52,6 +52,10 @@ export interface GameState {
     clickLevel: number;
     clickXP: number;
     goldenShroom: GoldenShroomState | null;
+    achievements: string[];
+    stats: {
+        totalClicks: number;
+    };
 }
 
 export type GameAction =
